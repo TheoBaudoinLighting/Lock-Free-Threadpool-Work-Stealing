@@ -56,8 +56,17 @@ target_link_libraries(threadpool_benchmark
 )
 
 add_executable(heavy_benchmark tests/heavy_benchmark.cpp
-        tests/heavy_benchmark.cpp)
+        tests/heavy_benchmark.cpp
+)
 target_link_libraries(heavy_benchmark
+        PRIVATE
+        threadpool
+        pthread
+)
+
+add_executable(threadpool_examples
+        exemples/exemples.cpp)
+target_link_libraries(threadpool_examples
         PRIVATE
         threadpool
         pthread
