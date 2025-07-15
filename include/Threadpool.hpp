@@ -55,34 +55,39 @@ public:
     }
 
     T* pop() {
-        size_t current_head = head.load(std::memory_order_relaxed);
-        if (current_head == tail.load(std::memory_order_acquire)) {
-            return nullptr;
-        }
+        while (true) {
+            size_t current_head = head.load(std::memory_order_relaxed);
+            size_t current_tail = tail.load(std::memory_order_acquire);
 
-        T* item = buffer[current_head].data.load(std::memory_order_acquire);
-        head.store((current_head + 1) & MASK, std::memory_order_release);
-        return item;
+            if (current_head == current_tail) {
+                return nullptr;
+            }
+
+            size_t next_head = (current_head + 1) & MASK;
+            if (head.compare_exchange_weak(current_head, next_head,
+                                           std::memory_order_release,
+                                           std::memory_order_relaxed)) {
+                return buffer[current_head].data.load(std::memory_order_acquire);
+                                           }
+        }
     }
 
     T* steal() {
-        size_t current_head = head.load(std::memory_order_acquire);
-        size_t current_tail = tail.load(std::memory_order_acquire);
+        while (true) {
+            size_t current_head = head.load(std::memory_order_relaxed);
+            size_t current_tail = tail.load(std::memory_order_acquire);
 
-        if (current_head == current_tail) {
-            return nullptr;
+            if (current_head == current_tail) {
+                return nullptr;
+            }
+
+            size_t next_head = (current_head + 1) & MASK;
+            if (head.compare_exchange_weak(current_head, next_head,
+                                            std::memory_order_release,
+                                            std::memory_order_relaxed)) {
+                return buffer[current_head].data.load(std::memory_order_acquire);
+                                            }
         }
-
-        T* item = buffer[current_head].data.load(std::memory_order_acquire);
-        size_t next_head = (current_head + 1) & MASK;
-
-        if (head.compare_exchange_strong(current_head, next_head,
-                                           std::memory_order_release,
-                                           std::memory_order_relaxed)) {
-            return item;
-        }
-
-        return nullptr;
     }
 
     bool empty() const {
@@ -113,7 +118,6 @@ private:
     alignas(64) std::atomic<Task*> global_queue_head{nullptr};
     alignas(64) std::atomic<size_t> task_counter{0};
 
-    // MODIFICATION ICI: Ajout de 'inline static'
     inline static thread_local size_t thread_id = std::numeric_limits<size_t>::max();
     inline static thread_local std::mt19937 thread_rng{std::random_device{}()};
 

@@ -55,6 +55,14 @@ target_link_libraries(threadpool_benchmark
         pthread
 )
 
+add_executable(heavy_benchmark tests/heavy_benchmark.cpp
+        tests/heavy_benchmark.cpp)
+target_link_libraries(heavy_benchmark
+        PRIVATE
+        threadpool
+        pthread
+)
+
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS threadpool EXPORT ThreadPoolTargets)
 install(EXPORT ThreadPoolTargets

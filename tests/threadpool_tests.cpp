@@ -377,6 +377,85 @@ TEST_F(ThreadPoolTest, BurstLoadTest) {
     EXPECT_EQ(executed_count.load(), burst_size * burst_count);
 }
 
+TEST(TargetedThreadPoolTest, RingBufferContentionTest) {
+    constexpr int NUM_PRODUCER_THREADS = 4;
+    constexpr int TASKS_PER_PRODUCER = 25000;
+    constexpr int TOTAL_TASKS = NUM_PRODUCER_THREADS * TASKS_PER_PRODUCER;
+    const unsigned int hardware_threads = std::max(4u, std::thread::hardware_concurrency());
+
+    std::cout << "\n[ INFO ] Démarrage de RingBufferContentionTest..." << std::endl;
+    std::cout << "[ INFO ] Pool avec " << hardware_threads << " threads." << std::endl;
+    std::cout << "[ INFO ] " << NUM_PRODUCER_THREADS << " threads producteurs, "
+              << TASKS_PER_PRODUCER << " tâches chacun. Total: " << TOTAL_TASKS << " tâches." << std::endl;
+
+    LockFreeThreadPool pool(hardware_threads);
+    std::atomic<int> task_counter{0};
+    std::vector<std::thread> producers;
+
+    for (int i = 0; i < NUM_PRODUCER_THREADS; ++i) {
+        producers.emplace_back([&pool, &task_counter]() {
+            for (int j = 0; j < TASKS_PER_PRODUCER; ++j) {
+                pool.enqueue([&task_counter]() {
+                    task_counter.fetch_add(1, std::memory_order_relaxed);
+                });
+            }
+        });
+    }
+
+    for (auto& t : producers) {
+        t.join();
+    }
+    std::cout << "[ INFO ] Tous les producteurs ont terminé. Attente de la fin du pool..." << std::endl;
+
+    pool.wait();
+    std::cout << "[ INFO ] Pool terminé. Vérification du résultat..." << std::endl;
+    std::cout << "[ INFO ] Compteur final de tâches exécutées : " << task_counter.load() << std::endl;
+
+    EXPECT_EQ(task_counter.load(), TOTAL_TASKS);
+}
+
+namespace {
+int blocking_recursion(LockFreeThreadPool& pool, int depth) {
+    std::stringstream ss;
+    ss << "[ DEADLOCK_TEST ] Thread " << std::this_thread::get_id()
+       << " entre à la profondeur " << depth << ".\n";
+    std::cout << ss.str();
+
+    if (depth <= 0) {
+        return 1;
+    }
+
+    auto future = pool.enqueue(blocking_recursion, std::ref(pool), depth - 1);
+
+    int result2 = blocking_recursion(pool, depth - 1);
+
+    return future.get() + result2;
+}
+}
+
+TEST(TargetedThreadPoolTest, DeadlockReproductionTest) {
+    constexpr int POOL_SIZE = 2;
+    constexpr int INITIAL_DEPTH = POOL_SIZE + 1;
+
+    std::cout << "\n[ INFO ] Démarrage de DeadlockReproductionTest..." << std::endl;
+    std::cout << "[ INFO ] Pool avec " << POOL_SIZE << " threads, profondeur de récursion initiale: " << INITIAL_DEPTH << std::endl;
+    std::cout << "[ ATTENTION ] Si ce test gèle, le deadlock est reproduit. Vous devrez l'arrêter manuellement." << std::endl;
+
+    LockFreeThreadPool pool(POOL_SIZE);
+
+    auto final_future = pool.enqueue(blocking_recursion, std::ref(pool), INITIAL_DEPTH);
+
+    int result = final_future.get();
+
+    std::cout << "[ INFO ] DeadlockReproductionTest terminé avec succès. Résultat: " << result << std::endl;
+
+    int expected_result = 1;
+    for(int i = 0; i < INITIAL_DEPTH; ++i) {
+        expected_result *= 2;
+    }
+    EXPECT_EQ(result, expected_result);
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
