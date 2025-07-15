@@ -20,18 +20,22 @@ FetchContent_Declare(
         GIT_REPOSITORY https://github.com/google/googletest.git
         GIT_TAG v1.14.0
 )
-
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
-
 enable_testing()
 
-add_library(threadpool INTERFACE
-        tests/threadpool_tests.cpp
-        tests/benchmark.cpp)
+add_library(threadpool INTERFACE)
 target_include_directories(threadpool INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
+)
+
+add_executable(main_app main.cpp)
+
+target_link_libraries(main_app
+        PRIVATE
+        threadpool
+        pthread
 )
 
 add_executable(threadpool_tests tests/threadpool_tests.cpp)
@@ -42,7 +46,6 @@ target_link_libraries(threadpool_tests
         GTest::gtest
         pthread
 )
-
 add_test(NAME ThreadPoolTests COMMAND threadpool_tests)
 
 add_executable(threadpool_benchmark tests/benchmark.cpp)

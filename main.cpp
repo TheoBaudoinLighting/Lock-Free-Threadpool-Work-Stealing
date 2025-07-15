@@ -1,16 +1,36 @@
 #include <iostream>
+#include <chrono>
+#include "Threadpool.hpp"
 
-// TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
+// A sample function that returns a value
+int multiply(int a, int b) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    return a * b;
+}
+
+// A sample function that does not return a value
+void print_message(const std::string& msg) {
+    std::cout << msg << std::endl;
+}
+
 int main() {
-    // TIP Press <shortcut actionId="RenameElement"/> when your caret is at the <b>lang</b> variable name to see how CLion can help you rename it.
-    auto lang = "C++";
-    std::cout << "Hello and welcome to " << lang << "!\n";
+    // Create a thread pool with the optimal number of threads for the hardware.
+    LockFreeThreadPool pool;
 
-    for (int i = 1; i <= 5; i++) {
-        // TIP Press <shortcut actionId="Debug"/> to start debugging your code. We have set one <icon src="AllIcons.Debugger.Db_set_breakpoint"/> breakpoint for you, but you can always add more by pressing <shortcut actionId="ToggleLineBreakpoint"/>.
-        std::cout << "i = " << i << std::endl;
-    }
+    // Enqueue tasks and get their std::future objects.
+    std::future<int> future1 = pool.enqueue(multiply, 5, 10);
+    std::future<void> future2 = pool.enqueue(print_message, "Hello from the thread pool!");
 
+    // You can continue doing other work in the main thread.
+    std::cout << "Tasks have been enqueued." << std::endl;
+
+    // Wait for the results. Calling .get() on a future will block until the task is complete.
+    int result = future1.get();
+    future2.get();
+
+    std::cout << "The result of the multiplication is: " << result << std::endl;
+
+    // The LockFreeThreadPool destructor will be called here,
+    // automatically waiting for any remaining tasks to finish before exiting.
     return 0;
-    // TIP See CLion help at <a href="https://www.jetbrains.com/help/clion/">jetbrains.com/help/clion/</a>. Also, you can try interactive lessons for CLion by selecting 'Help | Learn IDE Features' from the main menu.
 }
