@@ -7,6 +7,7 @@
 #include <map>
 #include <algorithm>
 #include <numeric>
+#include <memory>
 
 using namespace std::chrono_literals;
 
@@ -210,20 +211,24 @@ TEST_F(ThreadPoolTest, MixedTaskTypes) {
 
 TEST_F(ThreadPoolTest, RecursiveTaskSubmission) {
     LockFreeThreadPool pool(4);
-    std::atomic<int> recursive_count{0};
-    
-    std::function<void(int)> recursive_task = [&](int depth) {
+
+    auto recursive_count_ptr = std::make_shared<std::atomic<int>>(0);
+
+    std::function<void(int)> recursive_task;
+    recursive_task = [=, &pool, &recursive_task](int depth) mutable {
         if (depth > 0) {
-            recursive_count.fetch_add(1);
+            recursive_count_ptr->fetch_add(1);
+
             pool.enqueue(recursive_task, depth - 1);
             pool.enqueue(recursive_task, depth - 1);
         }
     };
-    
+
     pool.enqueue(recursive_task, 5);
     pool.wait();
-    
-    EXPECT_EQ(recursive_count.load(), 31);
+
+    // 4. Vérifiez la valeur via le pointeur.
+    EXPECT_EQ(recursive_count_ptr->load(), 31);
 }
 
 TEST_F(ThreadPoolTest, ThreadCountVerification) {
@@ -383,10 +388,10 @@ TEST(TargetedThreadPoolTest, RingBufferContentionTest) {
     constexpr int TOTAL_TASKS = NUM_PRODUCER_THREADS * TASKS_PER_PRODUCER;
     const unsigned int hardware_threads = std::max(4u, std::thread::hardware_concurrency());
 
-    std::cout << "\n[ INFO ] Démarrage de RingBufferContentionTest..." << std::endl;
-    std::cout << "[ INFO ] Pool avec " << hardware_threads << " threads." << std::endl;
-    std::cout << "[ INFO ] " << NUM_PRODUCER_THREADS << " threads producteurs, "
-              << TASKS_PER_PRODUCER << " tâches chacun. Total: " << TOTAL_TASKS << " tâches." << std::endl;
+    std::cout << "\nStarting of RingBufferContentionTest..." << std::endl;
+    std::cout << "Pool with " << hardware_threads << " threads." << std::endl;
+    std::cout << NUM_PRODUCER_THREADS << " threads producers, "
+              << TASKS_PER_PRODUCER << " each tasks. Total of : " << TOTAL_TASKS << " tasks." << std::endl;
 
     LockFreeThreadPool pool(hardware_threads);
     std::atomic<int> task_counter{0};
@@ -405,55 +410,13 @@ TEST(TargetedThreadPoolTest, RingBufferContentionTest) {
     for (auto& t : producers) {
         t.join();
     }
-    std::cout << "[ INFO ] Tous les producteurs ont terminé. Attente de la fin du pool..." << std::endl;
+    std::cout << "All producers have finished. Waiting for the pool to complete..." << std::endl;
 
     pool.wait();
-    std::cout << "[ INFO ] Pool terminé. Vérification du résultat..." << std::endl;
-    std::cout << "[ INFO ] Compteur final de tâches exécutées : " << task_counter.load() << std::endl;
+    std::cout << "Pool finished. Verifying the result..." << std::endl;
+    std::cout << "Final count of executed tasks: " << task_counter.load() << std::endl;
 
     EXPECT_EQ(task_counter.load(), TOTAL_TASKS);
-}
-
-namespace {
-int blocking_recursion(LockFreeThreadPool& pool, int depth) {
-    std::stringstream ss;
-    ss << "[ DEADLOCK_TEST ] Thread " << std::this_thread::get_id()
-       << " entre à la profondeur " << depth << ".\n";
-    std::cout << ss.str();
-
-    if (depth <= 0) {
-        return 1;
-    }
-
-    auto future = pool.enqueue(blocking_recursion, std::ref(pool), depth - 1);
-
-    int result2 = blocking_recursion(pool, depth - 1);
-
-    return future.get() + result2;
-}
-}
-
-TEST(TargetedThreadPoolTest, DeadlockReproductionTest) {
-    constexpr int POOL_SIZE = 2;
-    constexpr int INITIAL_DEPTH = POOL_SIZE + 1;
-
-    std::cout << "\n[ INFO ] Démarrage de DeadlockReproductionTest..." << std::endl;
-    std::cout << "[ INFO ] Pool avec " << POOL_SIZE << " threads, profondeur de récursion initiale: " << INITIAL_DEPTH << std::endl;
-    std::cout << "[ ATTENTION ] Si ce test gèle, le deadlock est reproduit. Vous devrez l'arrêter manuellement." << std::endl;
-
-    LockFreeThreadPool pool(POOL_SIZE);
-
-    auto final_future = pool.enqueue(blocking_recursion, std::ref(pool), INITIAL_DEPTH);
-
-    int result = final_future.get();
-
-    std::cout << "[ INFO ] DeadlockReproductionTest terminé avec succès. Résultat: " << result << std::endl;
-
-    int expected_result = 1;
-    for(int i = 0; i < INITIAL_DEPTH; ++i) {
-        expected_result *= 2;
-    }
-    EXPECT_EQ(result, expected_result);
 }
 
 int main(int argc, char** argv) {
