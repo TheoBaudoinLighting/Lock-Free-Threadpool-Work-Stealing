@@ -68,7 +68,7 @@ public:
                                            std::memory_order_release,
                                            std::memory_order_relaxed)) {
                 return buffer[current_head].data.load(std::memory_order_acquire);
-                                           }
+                                            }
         }
     }
 
@@ -86,7 +86,7 @@ public:
                                             std::memory_order_release,
                                             std::memory_order_relaxed)) {
                 return buffer[current_head].data.load(std::memory_order_acquire);
-                                            }
+                                             }
         }
     }
 
@@ -118,11 +118,18 @@ private:
     alignas(64) std::atomic<Task*> global_queue_head{nullptr};
     alignas(64) std::atomic<size_t> task_counter{0};
 
-    inline static thread_local size_t thread_id = std::numeric_limits<size_t>::max();
-    inline static thread_local std::mt19937 thread_rng{std::random_device{}()};
+    static thread_local size_t& get_thread_id() {
+        static thread_local size_t id_val = std::numeric_limits<size_t>::max();
+        return id_val;
+    }
+
+    static thread_local std::mt19937& get_thread_rng() {
+        static thread_local std::mt19937 rng_val{std::random_device{}()};
+        return rng_val;
+    }
 
     void worker_thread(size_t id) {
-        thread_id = id;
+        get_thread_id() = id;
         auto& data = *worker_data[id];
 
         while (!stop.load(std::memory_order_relaxed)) {
@@ -169,7 +176,7 @@ private:
         std::uniform_int_distribution<size_t> dist(0, victim_count - 1);
 
         for (size_t attempts = 0; attempts < victim_count * 2; ++attempts) {
-            size_t victim_id = dist(thread_rng);
+            size_t victim_id = dist(get_thread_rng());
             if (victim_id == thief_id) continue;
 
             Task* task = worker_data[victim_id]->local_queue.steal();
@@ -244,36 +251,37 @@ public:
         auto promise = std::make_shared<std::promise<return_type>>();
         auto future = promise->get_future();
 
-        auto task = new Task{
-            [promise, func = std::bind(std::forward<F>(f), std::forward<Args>(args)...)]() mutable {
-                try {
-                    if constexpr (std::is_void_v<return_type>) {
-                        func();
-                        promise->set_value();
-                    } else {
-                        promise->set_value(func());
-                    }
-                } catch (...) {
-                    promise->set_exception(std::current_exception());
+        auto task_func = [promise, func = std::bind(std::forward<F>(f), std::forward<Args>(args)...)]() mutable {
+            try {
+                if constexpr (std::is_void_v<return_type>) {
+                    func();
+                    promise->set_value();
+                } else {
+                    promise->set_value(func());
                 }
+            } catch (...) {
+                promise->set_exception(std::current_exception());
             }
         };
 
-        if (thread_id < worker_data.size()) {
-            if (worker_data[thread_id]->local_queue.push(task)) {
-                wake_sleeping_thread();
-                return future;
-            }
+        auto task = new Task{task_func};
+
+        size_t current_thread_id = get_thread_id();
+        bool enqueued_locally = false;
+        if (current_thread_id < worker_data.size()) {
+            enqueued_locally = worker_data[current_thread_id]->local_queue.push(task);
         }
 
-        Task* old_head = global_queue_head.load(std::memory_order_acquire);
-        do {
-            task->next = old_head;
-        } while (!global_queue_head.compare_exchange_weak(old_head, task,
-                                                           std::memory_order_release,
-                                                           std::memory_order_acquire));
+        if (!enqueued_locally) {
+            Task* old_head = global_queue_head.load(std::memory_order_acquire);
+            do {
+                task->next = old_head;
+            } while (!global_queue_head.compare_exchange_weak(old_head, task,
+                                                              std::memory_order_release,
+                                                              std::memory_order_acquire));
+            global_queue_size.fetch_add(1, std::memory_order_relaxed);
+        }
 
-        global_queue_size.fetch_add(1, std::memory_order_relaxed);
         wake_sleeping_thread();
 
         return future;
